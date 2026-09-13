@@ -1,0 +1,42 @@
+# Reference preview. Use the generated 02-mikrotik-firewall.rsc for deployment.
+{
+# Firewall suggestion for bongao-catv_core-router; apply locally after 01-mikrotik-bth.rsc.
+# Description: Bongao CATV core router
+# Whitelist: 192.168.216.10/32 on back-to-home-vpn -> 10.231.1.10/32 TCP 22,8291 and ICMP.
+# Other addresses retain their existing policies. No forwarded LAN access is added.
+# Review existing dynamic input rules: they must not broadly accept this loopback.
+:if ([:len [/interface wireguard find where name="back-to-home-vpn"]] != 1) do={ :error "BTH interface missing" }
+:if ([:len [/ip firewall filter find where chain="BTH-bongao-IN"]] > 0) do={ :error "Generated chain exists; do not rerun" }
+:if ([:len [/ip firewall address-list find where list="BTH-bongao-ADMIN"]] > 0) do={ :error "Generated whitelist exists; inspect before proceeding" }
+:if ([/ip service get winbox port] != 8291 || [/ip service get ssh port] != 22) do={ :error "Service ports differ; adapt firewall ports first" }
+:if ([/ip service get winbox vrf] != "main" || [/ip service get ssh vrf] != "main") do={ :error "Management services must be in main VRF for this design" }
+:if ([/ip service get winbox address] != "" || [/ip service get ssh address] != "") do={ :error "Restricted service bindings: include the VPN client without removing existing permitted sources, then adapt this guard" }
+:if ([:len [/ip firewall filter find where dynamic=no]] = 0) do={ :error "Expected existing core firewall not found; review before applying" }
+# Reuse an existing exact /32 ONLY if it is on an empty bridge (a loopback).
+:local existing [/ip address find where address="10.231.1.10/32"]
+:if ([:len $existing] > 1) do={ :error "Duplicate router address" }
+:if ([:len $existing] = 1) do={
+    :local parent [/ip address get $existing interface]
+    :if ([:len [/interface bridge find where name=$parent]] != 1) do={ :error "Router /32 is not on a loopback bridge" }
+    :if ([:len [/interface bridge port find where bridge=$parent]] > 0) do={ :error "Existing address is on a bridge with ports" }
+} else={
+    :if ([:len [/interface find where name="LO-BTH-bongao"]] > 0) do={ :error "Loopback name already exists without the expected address" }
+    :foreach a in=[/ip address find] do={
+        :if (10.231.1.10 in [/ip address get $a address]) do={ :error "Router address overlaps a configured subnet; review previous VLAN/DHCP changes" }
+    }
+}
+/ip firewall address-list add list="BTH-bongao-ADMIN" address=192.168.216.10/32 comment="BTHSETUP:bongao:admin"
+/ip firewall filter add chain="BTH-bongao-IN" action=drop connection-state=invalid comment="BTHSETUP:bongao:invalid"
+/ip firewall filter add chain="BTH-bongao-IN" action=accept in-interface=back-to-home-vpn src-address-list="BTH-bongao-ADMIN" protocol=tcp dst-port=22,8291 comment="BTHSETUP:bongao:services"
+/ip firewall filter add chain="BTH-bongao-IN" action=accept in-interface=back-to-home-vpn src-address-list="BTH-bongao-ADMIN" protocol=icmp comment="BTHSETUP:bongao:icmp"
+/ip firewall filter add chain="BTH-bongao-IN" action=drop comment="BTHSETUP:bongao:deny"
+/ip firewall filter add chain=input action=jump jump-target="BTH-bongao-IN" dst-address=10.231.1.10/32 place-before=[:pick [/ip firewall filter find where dynamic=no] 0] comment="BTHSETUP:bongao:jump"
+:if ([:len $existing] = 0) do={
+    /interface bridge add name="LO-BTH-bongao" protocol-mode=none arp=disabled comment="BTHSETUP:bongao:loopback"
+    /ip address add address=10.231.1.10/32 network=10.231.1.10 interface="LO-BTH-bongao" comment="BTHSETUP:bongao:address"
+}
+/ip service set winbox disabled=no
+/ip service set ssh disabled=no
+# No WAN management allow rule, dst-nat, VLAN, DHCP or default-route changes.
+# Native BTH supplies its transport rule and relay mechanism.
+}

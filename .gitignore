@@ -1,0 +1,22 @@
+# Python build/test artifacts
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Private runtime state and generated configuration
+.bth-*/
+bth-transfer/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.conf
+*.key
+*.pem
+*.rsc
+*.backup
+*.pending
+state.json
+router-profile.txt
